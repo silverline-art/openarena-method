@@ -3,12 +3,19 @@ import numpy as np
 import logging
 from typing import Dict, Any, List
 from ..utils.signal_processing import compute_mad
+from ..constants import CI_PERCENTILE_DEFAULT, TRIM_PERCENT_DEFAULT
 
 logger = logging.getLogger(__name__)
 
 
 class StatisticsAggregator:
     """Aggregate metrics with statistical measures"""
+
+    def __init__(self):
+        """Initialize aggregator with optional v1.2.0 enhanced stats"""
+        self.use_enhanced_stats = False
+        self.ci_percentile = CI_PERCENTILE_DEFAULT
+        self.trim_percent = TRIM_PERCENT_DEFAULT
 
     @staticmethod
     def compute_summary_stats(values: np.ndarray) -> Dict[str, float]:
@@ -47,8 +54,8 @@ class StatisticsAggregator:
     @staticmethod
     def compute_summary_stats_v2(values: np.ndarray,
                                  include_ci: bool = True,
-                                 ci_percentile: float = 95,
-                                 trim_percent: float = 5) -> Dict[str, float]:
+                                 ci_percentile: float = CI_PERCENTILE_DEFAULT,
+                                 trim_percent: float = TRIM_PERCENT_DEFAULT) -> Dict[str, float]:
         """
         Compute enhanced summary statistics with confidence intervals (v1.2.0).
 
@@ -145,7 +152,16 @@ class StatisticsAggregator:
                         'value': metric_value
                     }
                 elif isinstance(metric_value, np.ndarray):
-                    stats = self.compute_summary_stats(metric_value)
+                    # Use enhanced stats if enabled (v1.2.0)
+                    if self.use_enhanced_stats:
+                        stats = self.compute_summary_stats_v2(
+                            metric_value,
+                            include_ci=True,
+                            ci_percentile=self.ci_percentile,
+                            trim_percent=self.trim_percent
+                        )
+                    else:
+                        stats = self.compute_summary_stats(metric_value)
                     aggregated[limb][metric_name] = stats
                 else:
                     aggregated[limb][metric_name] = metric_value
@@ -178,7 +194,16 @@ class StatisticsAggregator:
                         'value': metric_value
                     }
                 elif isinstance(metric_value, np.ndarray):
-                    stats = self.compute_summary_stats(metric_value)
+                    # Use enhanced stats if enabled (v1.2.0)
+                    if self.use_enhanced_stats:
+                        stats = self.compute_summary_stats_v2(
+                            metric_value,
+                            include_ci=True,
+                            ci_percentile=self.ci_percentile,
+                            trim_percent=self.trim_percent
+                        )
+                    else:
+                        stats = self.compute_summary_stats(metric_value)
                     aggregated[joint][metric_name] = stats
                 else:
                     aggregated[joint][metric_name] = metric_value

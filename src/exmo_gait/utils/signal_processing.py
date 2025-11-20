@@ -3,9 +3,21 @@ import numpy as np
 from scipy import signal
 from scipy.interpolate import interp1d
 from typing import Tuple, Optional
+from ..constants import (
+    SAVGOL_WINDOW_SIZE_DEFAULT,
+    SAVGOL_POLY_ORDER_DEFAULT,
+    MAD_MULTIPLIER_DEFAULT,
+    FPS_DEFAULT,
+    EMA_ALPHA_DEFAULT,
+    DATA_COMPLETENESS_HIGH,
+    DATA_COMPLETENESS_MEDIUM,
+    SAVGOL_WINDOW_SIZE_ADAPTIVE_HIGH,
+    SAVGOL_WINDOW_SIZE_ADAPTIVE_MED,
+    SAVGOL_WINDOW_SIZE_ADAPTIVE_LOW
+)
 
 
-def apply_savgol_filter(data: np.ndarray, window_length: int = 11, polyorder: int = 3) -> np.ndarray:
+def apply_savgol_filter(data: np.ndarray, window_length: int = SAVGOL_WINDOW_SIZE_DEFAULT, polyorder: int = SAVGOL_POLY_ORDER_DEFAULT) -> np.ndarray:
     """
     Apply Savitzky-Golay filter for smoothing trajectories.
 
@@ -65,7 +77,7 @@ def interpolate_missing_values(data: np.ndarray, max_gap: int = 5) -> Tuple[np.n
     return result, ~np.isnan(result)
 
 
-def compute_mad(data: np.ndarray, scale: float = 1.4826) -> float:
+def compute_mad(data: np.ndarray, scale: float = MAD_MULTIPLIER_DEFAULT) -> float:
     """
     Compute Median Absolute Deviation (MAD).
 
@@ -119,7 +131,7 @@ def filter_outliers_mad(data: np.ndarray, threshold: float = 3.0) -> np.ndarray:
     return result
 
 
-def compute_velocity(positions: np.ndarray, fps: float = 120.0) -> np.ndarray:
+def compute_velocity(positions: np.ndarray, fps: float = FPS_DEFAULT) -> np.ndarray:
     """
     Compute velocity from position data.
 
@@ -135,7 +147,7 @@ def compute_velocity(positions: np.ndarray, fps: float = 120.0) -> np.ndarray:
     return velocity
 
 
-def compute_angular_velocity(angles: np.ndarray, fps: float = 120.0) -> np.ndarray:
+def compute_angular_velocity(angles: np.ndarray, fps: float = FPS_DEFAULT) -> np.ndarray:
     """
     Compute angular velocity from angle data.
 
@@ -191,7 +203,7 @@ def smooth_binary_classification(binary_signal: np.ndarray,
     return smoothed > 0.5
 
 
-def smooth_velocity_ema(positions: np.ndarray, alpha: float = 0.35, fps: float = 120.0) -> np.ndarray:
+def smooth_velocity_ema(positions: np.ndarray, alpha: float = EMA_ALPHA_DEFAULT, fps: float = FPS_DEFAULT) -> np.ndarray:
     """
     Compute velocity using Exponential Moving Average (EMA) smoothing (v1.2.0).
 
@@ -228,8 +240,8 @@ def smooth_velocity_ema(positions: np.ndarray, alpha: float = 0.35, fps: float =
 def smooth_trajectory_adaptive(
     trajectory: np.ndarray,
     data_completeness: float,
-    window_size_base: int = 7,
-    polyorder: int = 3
+    window_size_base: int = SAVGOL_WINDOW_SIZE_ADAPTIVE_HIGH,
+    polyorder: int = SAVGOL_POLY_ORDER_DEFAULT
 ) -> np.ndarray:
     """
     Apply adaptive smoothing based on data quality (v1.2.0).
@@ -249,15 +261,15 @@ def smooth_trajectory_adaptive(
         Smoothed trajectory array
     """
     # Adjust window size based on data quality
-    if data_completeness >= 0.9:
+    if data_completeness >= DATA_COMPLETENESS_HIGH:
         # High quality: less smoothing needed
-        window_size = max(polyorder + 2, window_size_base - 2)
-    elif data_completeness >= 0.7:
-        # Medium quality: use base window
-        window_size = window_size_base
+        window_size = SAVGOL_WINDOW_SIZE_ADAPTIVE_HIGH
+    elif data_completeness >= DATA_COMPLETENESS_MEDIUM:
+        # Medium quality: use medium window
+        window_size = SAVGOL_WINDOW_SIZE_ADAPTIVE_MED
     else:
         # Low quality: more smoothing for robustness
-        window_size = window_size_base + 2
+        window_size = SAVGOL_WINDOW_SIZE_ADAPTIVE_LOW
 
     # Ensure window is odd and valid
     if window_size % 2 == 0:

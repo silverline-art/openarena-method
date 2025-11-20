@@ -1,6 +1,18 @@
 """Geometric calculations for biomechanical analysis"""
 import numpy as np
 from typing import Tuple
+from ..constants import (
+    FPS_DEFAULT,
+    EPSILON,
+    COSINE_CLIP_MIN,
+    COSINE_CLIP_MAX,
+    LEGACY_SPINE_LENGTH_CM,
+    DEFAULT_MOUSE_BODY_LENGTH_CM,
+    MIN_LIKELIHOOD_SCALING,
+    SCALING_TOLERANCE_DEFAULT,
+    MIN_FRAMES_FOR_SCALING,
+    MIN_FRAMES_FOR_ANALYSIS
+)
 
 
 def compute_distance_2d(p1: np.ndarray, p2: np.ndarray) -> np.ndarray:
@@ -44,8 +56,8 @@ def compute_angle_3points(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> np.
     v1 = p1 - p2
     v2 = p3 - p2
 
-    cos_angle = np.sum(v1 * v2, axis=1) / (np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1) + 1e-10)
-    cos_angle = np.clip(cos_angle, -1.0, 1.0)
+    cos_angle = np.sum(v1 * v2, axis=1) / (np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1) + EPSILON)
+    cos_angle = np.clip(cos_angle, COSINE_CLIP_MIN, COSINE_CLIP_MAX)
     angle = np.degrees(np.arccos(cos_angle))
 
     return angle if len(angle) > 1 else angle[0]
@@ -88,7 +100,7 @@ def compute_trajectory_length(trajectory: np.ndarray) -> float:
     return np.sum(distances)
 
 
-def compute_trajectory_speed(trajectory: np.ndarray, fps: float = 120.0) -> np.ndarray:
+def compute_trajectory_speed(trajectory: np.ndarray, fps: float = FPS_DEFAULT) -> np.ndarray:
     """
     Compute instantaneous speed along trajectory.
 
@@ -213,7 +225,7 @@ def pixels_to_cm(pixel_values: np.ndarray, scale_factor: float) -> np.ndarray:
 
 
 def compute_scaling_factor(point1: np.ndarray, point2: np.ndarray,
-                          known_distance_cm: float = 8.0) -> float:
+                          known_distance_cm: float = LEGACY_SPINE_LENGTH_CM) -> float:
     """
     Compute scaling factor from known distance between two points (LEGACY v1.1).
 
@@ -235,9 +247,9 @@ def compute_scaling_factor_v2(
     tailbase_trajectory: np.ndarray,
     likelihood_snout: np.ndarray = None,
     likelihood_tail: np.ndarray = None,
-    expected_body_length_cm: float = 10.0,
-    min_likelihood: float = 0.9,
-    tolerance: float = 0.25
+    expected_body_length_cm: float = DEFAULT_MOUSE_BODY_LENGTH_CM,
+    min_likelihood: float = MIN_LIKELIHOOD_SCALING,
+    tolerance: float = SCALING_TOLERANCE_DEFAULT
 ) -> Tuple[float, dict]:
     """
     Compute scaling factor using full-body measurement (v1.2.0).
@@ -282,7 +294,7 @@ def compute_scaling_factor_v2(
     valid_mask &= ~np.isnan(snout_trajectory).any(axis=1)
     valid_mask &= ~np.isnan(tailbase_trajectory).any(axis=1)
 
-    if np.sum(valid_mask) < 100:
+    if np.sum(valid_mask) < MIN_FRAMES_FOR_SCALING:
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(
@@ -307,7 +319,7 @@ def compute_scaling_factor_v2(
     inliers = body_length_px[inlier_mask]
     outliers_removed = np.sum(~inlier_mask)
 
-    if len(inliers) < 50:
+    if len(inliers) < MIN_FRAMES_FOR_ANALYSIS:
         import logging
         logger = logging.getLogger(__name__)
         logger.warning(

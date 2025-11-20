@@ -5,6 +5,7 @@ import numpy as np
 import logging
 from pathlib import Path
 from typing import Dict, List
+from ..constants import PLOT_DPI
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ COLORS = {
 class DashboardVisualizer:
     """Generate PNG dashboard plots"""
 
-    def __init__(self, output_dir: Path, dpi: int = 300):
+    def __init__(self, output_dir: Path, dpi: int = PLOT_DPI):
         """
         Initialize visualizer.
 

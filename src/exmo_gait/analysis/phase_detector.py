@@ -8,6 +8,15 @@ from ..utils.signal_processing import (
     compute_velocity
 )
 from ..utils.geometry import compute_trajectory_speed
+from ..constants import (
+    FPS_DEFAULT,
+    MAD_THRESHOLD_STATIONARY_DEFAULT,
+    MAD_THRESHOLD_WALKING_DEFAULT,
+    MIN_WALKING_DURATION_SEC,
+    MIN_STATIONARY_DURATION_SEC,
+    ADAPTIVE_PERCENTILE_DEFAULT,
+    MIN_THRESHOLD_PX_PER_FRAME
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +25,16 @@ class PhaseDetector:
     """Detect stationary and walking phases from CoM trajectory"""
 
     def __init__(self,
-                 fps: float = 120.0,
-                 stationary_mad_threshold: float = 1.5,
-                 walking_mad_threshold: float = 2.0,
-                 min_walking_duration: float = 0.3,
-                 min_stationary_duration: float = 0.25,
+                 fps: float = FPS_DEFAULT,
+                 stationary_mad_threshold: float = MAD_THRESHOLD_STATIONARY_DEFAULT,
+                 walking_mad_threshold: float = MAD_THRESHOLD_WALKING_DEFAULT,
+                 min_walking_duration: float = MIN_WALKING_DURATION_SEC,
+                 min_stationary_duration: float = MIN_STATIONARY_DURATION_SEC,
                  smoothing_window_ms: float = 250.0,
                  merge_gap_ms: float = 100.0,
                  use_hybrid_threshold: bool = False,
-                 adaptive_percentile: float = 75.0,
-                 min_threshold_px_per_frame: float = 1.0):
+                 adaptive_percentile: float = ADAPTIVE_PERCENTILE_DEFAULT,
+                 min_threshold_px_per_frame: float = MIN_THRESHOLD_PX_PER_FRAME):
         """
         Initialize phase detector.
 
@@ -112,7 +121,7 @@ class PhaseDetector:
         percentile_threshold = np.percentile(com_speed, self.adaptive_percentile)
 
         # Hybrid: average of both methods
-        hybrid_threshold = (mad_threshold + percentile_threshold) / 2.0
+        hybrid_threshold = (mad_threshold + percentile_threshold) / 2
 
         # Apply safety lower bound
         final_threshold = max(hybrid_threshold, self.min_threshold_px_per_frame)

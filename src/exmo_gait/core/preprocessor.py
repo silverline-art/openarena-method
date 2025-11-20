@@ -15,6 +15,15 @@ from ..utils.geometry import (
     compute_distance_2d
 )
 from ..utils.validation import validate_scaling_factor
+from ..constants import (
+    SAVGOL_WINDOW_SIZE_DEFAULT,
+    SAVGOL_POLY_ORDER_DEFAULT,
+    LEGACY_SPINE_LENGTH_CM,
+    DEFAULT_MOUSE_BODY_LENGTH_CM,
+    MIN_LIKELIHOOD_SCALING,
+    SCALING_TOLERANCE_DEFAULT,
+    DATA_COMPLETENESS_MEDIUM
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +32,8 @@ class DataPreprocessor:
     """Preprocess pose estimation data for analysis"""
 
     def __init__(self,
-                 smoothing_window: int = 11,
-                 smoothing_poly: int = 3,
+                 smoothing_window: int = SAVGOL_WINDOW_SIZE_DEFAULT,
+                 smoothing_poly: int = SAVGOL_POLY_ORDER_DEFAULT,
                  outlier_threshold: float = 3.0,
                  max_interpolation_gap: int = 5):
         """
@@ -45,7 +54,7 @@ class DataPreprocessor:
     def compute_scale_factor(self,
                             point1: np.ndarray,
                             point2: np.ndarray,
-                            known_distance_cm: float = 8.0) -> float:
+                            known_distance_cm: float = LEGACY_SPINE_LENGTH_CM) -> float:
         """
         Compute scaling factor from known distance (LEGACY v1.1).
 
@@ -78,9 +87,9 @@ class DataPreprocessor:
                                tailbase: np.ndarray,
                                likelihood_snout: np.ndarray = None,
                                likelihood_tail: np.ndarray = None,
-                               expected_body_length_cm: float = 10.0,
-                               min_likelihood: float = 0.9,
-                               tolerance: float = 0.25) -> Tuple[float, Dict]:
+                               expected_body_length_cm: float = DEFAULT_MOUSE_BODY_LENGTH_CM,
+                               min_likelihood: float = MIN_LIKELIHOOD_SCALING,
+                               tolerance: float = SCALING_TOLERANCE_DEFAULT) -> Tuple[float, Dict]:
         """
         Compute scaling factor using full-body measurement (v1.2.0).
 
@@ -268,7 +277,7 @@ class DataPreprocessor:
             processed, metrics = self.preprocess_keypoint_2d(data)
             preprocessed[name] = processed
 
-            if metrics['overall_completeness'] < 0.7:
+            if metrics['overall_completeness'] < DATA_COMPLETENESS_MEDIUM:
                 logger.warning(
                     f"Low data completeness for {name}: {metrics['overall_completeness']*100:.1f}%"
                 )

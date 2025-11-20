@@ -5,6 +5,7 @@ from typing import List, Tuple, Dict
 from scipy import signal
 from ..utils.signal_processing import compute_mad, detect_peaks_adaptive
 from ..utils.validation import validate_sufficient_strides
+from ..constants import FPS_DEFAULT, MIN_STRIDE_DURATION_SEC, MAX_STRIDE_DURATION_SEC
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,9 @@ class StepDetector:
     """Detect foot strikes and step events from paw trajectories"""
 
     def __init__(self,
-                 fps: float = 120.0,
-                 min_stride_duration: float = 0.1,
-                 max_stride_duration: float = 1.0,
+                 fps: float = FPS_DEFAULT,
+                 min_stride_duration: float = MIN_STRIDE_DURATION_SEC,
+                 max_stride_duration: float = MAX_STRIDE_DURATION_SEC,
                  prominence_multiplier: float = 0.5,
                  allow_micro_steps: bool = False,
                  micro_step_threshold_cm: float = 1.0):

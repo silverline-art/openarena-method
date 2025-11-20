@@ -11,6 +11,7 @@ from ..utils.geometry import (
     compute_lateral_deviation
 )
 from ..utils.signal_processing import compute_mad
+from ..constants import FPS_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 class GaitMetricsComputer:
     """Compute comprehensive gait analysis metrics"""
 
-    def __init__(self, fps: float = 120.0):
+    def __init__(self, fps: float = FPS_DEFAULT):
         """
         Initialize metrics computer.
 
@@ -297,7 +298,7 @@ class GaitMetricsComputer:
 class ROMMetricsComputer:
     """Compute range of motion metrics"""
 
-    def __init__(self, fps: float = 120.0):
+    def __init__(self, fps: float = FPS_DEFAULT):
         """
         Initialize ROM metrics computer.
 
@@ -537,7 +538,7 @@ class ROMMetricsComputer:
 
     def compute_velocity_3d(self,
                            com_3d: np.ndarray,
-                           fps: float = 120.0,
+                           fps: float = FPS_DEFAULT,
                            scaling_factor: float = 1.0) -> np.ndarray:
         """
         Compute 3D velocity from 3D COM trajectory (v1.2.0).

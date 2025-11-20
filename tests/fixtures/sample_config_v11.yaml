@@ -1,0 +1,45 @@
+# Sample v1.1.0 configuration for testing
+# This config uses legacy methods
+
+general:
+  fps: 120.0
+  output_dir: "test_results"
+  log_level: "INFO"
+
+scaling:
+  scaling_method: "spine_only"
+  expected_body_length_cm: 8.0
+  scaling_min_likelihood: 0.9
+  scaling_tolerance: 0.25
+
+smoothing:
+  smoothing_adaptive: false
+  smoothing_window: 11
+  smoothing_poly: 3
+  velocity_smoothing_method: "savgol"
+  velocity_ema_alpha: 0.35
+
+phase_detection:
+  stationary_mad_threshold: 1.5
+  walking_mad_threshold: 2.0
+  use_hybrid_threshold: false
+  adaptive_percentile: 75
+  min_threshold_px_per_frame: 1.0
+  min_walking_duration: 0.3
+  min_stationary_duration: 0.25
+
+stride_detection:
+  min_stride_duration: 0.1
+  max_stride_duration: 2.0
+  foot_strike_prominence: 0.5
+
+com:
+  use_3d_com: false
+
+aggregation:
+  aggregation_include_ci: false
+
+visualization:
+  generate_plots: true
+  plot_dpi: 300
+  plot_format: "png"

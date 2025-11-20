@@ -15,6 +15,7 @@ setup(
         "openpyxl>=3.1.0",
         "pyyaml>=6.0",
         "scikit-learn>=1.3.0",
+        "pydantic>=2.0.0",
     ],
     entry_points={
         "console_scripts": [
