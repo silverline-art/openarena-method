@@ -1,0 +1,213 @@
+# EXMO Gait Analysis Pipeline - ADAPTIVE Configuration
+# Version: 1.1.0 - Optimized for low-activity datasets
+# Date: 2025-11-21
+
+# ═════════════════════════════════════════════════════════════════════════════
+# GLOBAL SETTINGS - ADAPTIVE THRESHOLDS
+# ═════════════════════════════════════════════════════════════════════════════
+
+input_dir: "/home/shivam/Desktop/Rodent_PE/analysis/Exmo-Open/Data"
+output_dir: "/home/shivam/Desktop/Rodent_PE/analysis/Exmo-Open/Output"
+
+# Global processing parameters - RELAXED FOR LOW ACTIVITY
+global_settings:
+  fps: 120.0
+  expected_body_length_cm: 8.0
+  scaling_tolerance: 0.20
+
+  # Preprocessing - MORE AGGRESSIVE SMOOTHING
+  smoothing_window: 15              # Increased from 11 for noisy low-activity data
+  smoothing_poly: 3
+  outlier_threshold: 4.0            # Increased from 3.0 to be more permissive
+  max_interpolation_gap: 10         # Increased from 5 frames
+
+  # Phase detection - ADAPTIVE/RELAXED THRESHOLDS
+  stationary_mad_threshold: 1.0     # REDUCED from 1.5 (more sensitive)
+  walking_mad_threshold: 1.2        # REDUCED from 2.0 (detect subtle movement)
+  min_walking_duration: 0.15        # REDUCED from 0.3 (capture short walks)
+  min_stationary_duration: 0.15     # REDUCED from 0.25
+  smoothing_window_ms: 150.0        # REDUCED from 250 (faster response)
+  merge_gap_ms: 200.0               # INCREASED from 100 (merge more)
+
+  # Step detection - MORE SENSITIVE
+  min_stride_duration: 0.08         # REDUCED from 0.1 (faster strides)
+  max_stride_duration: 1.5          # INCREASED from 1.0 (slower strides)
+  prominence_multiplier: 0.3        # REDUCED from 0.5 (more sensitive peaks)
+
+  # Validation - MORE PERMISSIVE
+  min_valid_data_ratio: 0.5         # REDUCED from 0.7
+  min_strides_required: 2           # REDUCED from 3
+
+  # Output & Visualization
+  plot_dpi: 600                     # Publication-grade (300=screen, 600=journal)
+  use_enhanced_plots: true          # Use enhanced publication-style plots
+  plot_marker_size: 60              # Marker size for scatter plots
+  plot_font_scale: 1.0              # Global font size multiplier
+  plot_annotate_median: true        # Add median value annotations
+  plot_reference_bands: true        # Add normal range reference bands
+  verbose: true
+
+  # ADAPTIVE MODE - Auto-calibrate thresholds per sample
+  adaptive_thresholding: true       # NEW: Enable adaptive mode
+  adaptive_percentile: 75           # NEW: Use 75th percentile for dynamic thresholds
+
+# ═════════════════════════════════════════════════════════════════════════════
+# EXPERIMENT GROUPS
+# ═════════════════════════════════════════════════════════════════════════════
+
+experiment_groups:
+  control:
+    description: "Control group (0 Gy radiation)"
+    samples:
+      - control-1
+      - control-2
+      - control-3
+      - control_4
+      - control_5
+      - control_6
+      - control_7
+
+  low_dose_01:
+    description: "Low dose group (0.1 Gy radiation)"
+    samples:
+      - 0.1grade_1
+      - 0.1grade_2
+      - 0.1grade_3
+      - 0.1grade_4
+      - 0.1grade_5
+      - 0.1grade_6
+      - 0.1grade_7
+      - 0.1grade_8
+
+  medium_dose_1:
+    description: "Medium dose group (1 Gy radiation)"
+    samples:
+      - 1grade_1
+      - 1grade_2
+      - 1grade_3
+      - 1grade_4
+      - 1grade_5
+      - 1grade_6
+      - 1grade_7
+      - 1grade_8
+      - 1grade_9
+
+  high_dose_5:
+    description: "High dose group (5 Gy radiation)"
+    samples:
+      - 5_grade_1
+      - 5_grade_2
+      - 5_grade_3
+      - 5_grade_4
+      - 5_grade_5
+      - 5_grade_6
+      - 5_grade_7
+      - 5_grade_8
+      - 5_grade_9
+
+# ═════════════════════════════════════════════════════════════════════════════
+# FILE NAMING PATTERNS
+# ═════════════════════════════════════════════════════════════════════════════
+
+file_patterns:
+  top: "Top_{prefix}open_{sample_id}_*.csv"
+  side: "Side_{prefix}open_{sample_id}_*.csv"
+  bottom: "Bottom_{prefix}open_{sample_id}_*.csv"
+
+prefix_variations:
+  - "Irradiated_"
+  - "irradiated_"
+  - ""
+
+# ═════════════════════════════════════════════════════════════════════════════
+# OUTPUT ORGANIZATION
+# ═════════════════════════════════════════════════════════════════════════════
+
+output_structure:
+  create_group_folders: true
+  create_sample_folders: true
+
+output_naming:
+  xlsx: "Gait_Analysis_{sample_id}_{timestamp}.xlsx"
+  plots:
+    coordination: "plot_coordination_{sample_id}.png"
+    speed_spatial: "plot_speed_spatial_{sample_id}.png"
+    phase_timing: "plot_phase_timing_{sample_id}.png"
+    range_of_motion: "plot_range_of_motion_{sample_id}.png"
+  logs:
+    analysis: "analysis_log_{sample_id}_{timestamp}.txt"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# BATCH PROCESSING OPTIONS
+# ═════════════════════════════════════════════════════════════════════════════
+
+batch_processing:
+  parallel_jobs: 1                  # Set to 1 for easier debugging
+  continue_on_error: true
+  generate_summary_report: true
+
+summary_report:
+  compare_groups: true
+  include_plots: true
+  export_format: "xlsx"
+  output_filename: "Batch_Summary_Report_{timestamp}.xlsx"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SAMPLE-SPECIFIC OVERRIDES
+# ═════════════════════════════════════════════════════════════════════════════
+
+sample_overrides: {}
+
+# ═════════════════════════════════════════════════════════════════════════════
+# QUALITY CONTROL FLAGS - MORE PERMISSIVE
+# ═════════════════════════════════════════════════════════════════════════════
+
+quality_control:
+  enable_validation: true
+  fail_on_missing_keypoints: false
+  fail_on_low_quality: false
+  generate_qc_report: true
+
+quality_thresholds:
+  min_frames: 50                    # REDUCED from 100
+  min_duration_sec: 0.5             # REDUCED from 1.0
+  min_keypoint_completeness: 0.4    # REDUCED from 0.5
+  max_outlier_ratio: 0.4            # INCREASED from 0.3
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ADVANCED OPTIONS
+# ═════════════════════════════════════════════════════════════════════════════
+
+advanced:
+  save_intermediate_data: true
+  save_debug_plots: true            # ENABLED for diagnostics
+  compress_output: false
+  memory_efficient_mode: false
+
+logging:
+  level: "DEBUG"                    # MORE VERBOSE for troubleshooting
+  console_output: true
+  file_output: true
+  log_format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DIAGNOSTIC RECOMMENDATIONS
+# ═════════════════════════════════════════════════════════════════════════════
+
+# If plots are still empty after using this config:
+#
+# 1. Run diagnostic script:
+#    python diagnose_thresholds.py --sample 1grade_3 --config config_adaptive.yaml
+#
+# 2. Check logs for detection stats:
+#    grep "Detected" Output/*/logs/*.txt
+#
+# 3. Review walking window detection:
+#    grep "walking windows" Output/*/logs/*.txt
+#
+# 4. Inspect CoM speed distribution in intermediates/
+#
+# 5. If still no detection, consider:
+#    - Increase smoothing_window to 21
+#    - Reduce walking_mad_threshold to 0.8
+#    - Reduce min_walking_duration to 0.1
