@@ -227,6 +227,160 @@ def process_sample(sample_id: str, group_name: str, config: Dict,
 # SUMMARY REPORTING
 # ═══════════════════════════════════════════════════════════════════════════
 
+def collect_individual_stride_data(results: List[Dict], output_path: Path) -> pd.DataFrame:
+    """
+    Collect aggregated stride statistics from all successfully processed samples.
+
+    Args:
+        results: List of processing results
+        output_path: Base output path
+
+    Returns:
+        DataFrame with aggregated stride statistics (or empty DataFrame if none found)
+    """
+    logger = logging.getLogger("batch.stride_collection")
+    all_strides = []
+
+    for result in results:
+        if result.get('status') != 'success':
+            continue
+
+        sample_id = result.get('sample_id', 'Unknown')
+        group_name = result.get('group_name', 'Unknown')
+
+        # Find the sample's Gait_Analysis Excel file
+        sample_output_dir = output_path / group_name / sample_id
+        xlsx_files = list(sample_output_dir.glob('Gait_Analysis_*.xlsx'))
+
+        if not xlsx_files:
+            logger.warning(f"No Gait_Analysis file found for {sample_id}")
+            continue
+
+        xlsx_file = xlsx_files[0]
+
+        try:
+            # Read the Summary sheet
+            df_summary = pd.read_excel(xlsx_file, sheet_name='Summary')
+
+            # Extract aggregated data
+            for limb in ['paw_RR', 'paw_RL']:
+                # Stride lengths
+                stride_length_data = df_summary[
+                    (df_summary['category'] == 'Gait') &
+                    (df_summary['limb/joint'] == limb) &
+                    (df_summary['metric'] == 'stride_lengths')
+                ]
+
+                if not stride_length_data.empty:
+                    row_data = stride_length_data.iloc[0]
+                    all_strides.append({
+                        'sample_id': sample_id,
+                        'group': group_name,
+                        'limb': limb,
+                        'metric': 'stride_length',
+                        'mean_value': row_data.get('value', None),
+                        'median_value': row_data.get('median', None),
+                        'std': row_data.get('std', None),
+                        'mad': row_data.get('mad', None),
+                        'unit': row_data.get('unit', 'cm')
+                    })
+
+                # Stride times
+                stride_time_data = df_summary[
+                    (df_summary['category'] == 'Gait') &
+                    (df_summary['limb/joint'] == limb) &
+                    (df_summary['metric'] == 'stride_times')
+                ]
+
+                if not stride_time_data.empty:
+                    row_data = stride_time_data.iloc[0]
+                    all_strides.append({
+                        'sample_id': sample_id,
+                        'group': group_name,
+                        'limb': limb,
+                        'metric': 'stride_time',
+                        'mean_value': row_data.get('value', None),
+                        'median_value': row_data.get('median', None),
+                        'std': row_data.get('std', None),
+                        'mad': row_data.get('mad', None),
+                        'unit': row_data.get('unit', 's')
+                    })
+
+        except Exception as e:
+            logger.warning(f"Error reading stride data from {sample_id}: {e}")
+            continue
+
+    if not all_strides:
+        logger.warning("No stride data collected - returning empty DataFrame")
+        return pd.DataFrame()
+
+    return pd.DataFrame(all_strides)
+
+
+def collect_raw_stride_data(results: List[Dict], output_path: Path) -> pd.DataFrame:
+    """
+    Collect raw stride-by-stride data from all successfully processed samples.
+
+    Args:
+        results: List of processing results
+        output_path: Base output path
+
+    Returns:
+        DataFrame with individual stride values (or empty DataFrame if none found)
+    """
+    logger = logging.getLogger("batch.raw_stride_collection")
+    all_raw_strides = []
+
+    for result in results:
+        if result.get('status') != 'success':
+            continue
+
+        sample_id = result.get('sample_id', 'Unknown')
+        group_name = result.get('group_name', 'Unknown')
+
+        # Find the sample's intermediates directory
+        sample_output_dir = output_path / group_name / sample_id
+        intermediates_dir = sample_output_dir / 'intermediates'
+
+        if not intermediates_dir.exists():
+            logger.warning(f"No intermediates directory for {sample_id}")
+            continue
+
+        # Read stride data CSV files for hindlimbs
+        for limb in ['paw_RR', 'paw_RL']:
+            stride_file = intermediates_dir / f'stride_data_{limb}.csv'
+
+            if not stride_file.exists():
+                logger.warning(f"No stride data file for {sample_id} {limb}")
+                continue
+
+            try:
+                df_stride = pd.read_csv(stride_file)
+
+                for _, row in df_stride.iterrows():
+                    all_raw_strides.append({
+                        'sample_id': sample_id,
+                        'group': group_name,
+                        'limb': limb,
+                        'stride_number': row.get('stride_number', None),
+                        'stride_length_cm': row.get('stride_length_cm', None),
+                        'stride_time_s': row.get('stride_time_s', None),
+                        'start_frame': row.get('start_frame', None),
+                        'end_frame': row.get('end_frame', None)
+                    })
+
+            except Exception as e:
+                logger.warning(f"Error reading stride file for {sample_id} {limb}: {e}")
+                continue
+
+    if not all_raw_strides:
+        logger.warning("No raw stride data collected - returning empty DataFrame")
+        return pd.DataFrame()
+
+    logger.info(f"Collected {len(all_raw_strides)} raw stride records from {len(set(r['sample_id'] for r in all_raw_strides))} samples")
+    return pd.DataFrame(all_raw_strides)
+
+
 def generate_summary_report(results: List[Dict], config: Dict, output_path: Path):
     """
     Generate comprehensive batch processing summary report.
@@ -294,12 +448,61 @@ def generate_summary_report(results: List[Dict], config: Dict, output_path: Path
                                   'avg_processing_time_sec']
             group_stats.to_excel(writer, sheet_name='Group Statistics', index=False)
 
-        # Sheet 3: Errors (if any)
+        # Sheet 3: Aggregated Stride Statistics
+        try:
+            stride_data = collect_individual_stride_data(results, output_path)
+            if not stride_data.empty:
+                stride_data.to_excel(writer, sheet_name='Stride Statistics', index=False)
+                logger.info(f"Added {len(stride_data)} aggregated stride statistic records")
+        except Exception as e:
+            logger.warning(f"Could not add stride statistics: {e}")
+
+        # Sheet 4: Raw Stride Data (ALL individual values)
+        try:
+            raw_stride_data = collect_raw_stride_data(results, output_path)
+            if not raw_stride_data.empty:
+                raw_stride_data.to_excel(writer, sheet_name='Raw Stride Data', index=False)
+                logger.info(f"Added {len(raw_stride_data)} raw stride records (stride-by-stride)")
+        except Exception as e:
+            logger.warning(f"Could not add raw stride data: {e}")
+
+        # Sheet 5: Errors (if any)
         errors_df = df[df['status'] != 'success']
         if not errors_df.empty:
             errors_df.to_excel(writer, sheet_name='Errors', index=False)
 
     logger.info(f"Summary report saved: {summary_path}")
+
+    # Generate group comparison plots (v1.4.0)
+    if config.get('summary_report', {}).get('compare_groups', True):
+        try:
+            logger.info("Generating group comparison plots...")
+            from src.exmo_gait.statistics.group_comparator import GroupComparator
+
+            comparator = GroupComparator(output_path)
+            comparator.load_group_data(config['experiment_groups'])
+
+            # Compute statistics
+            stats_df = comparator.compute_group_statistics()
+            stats_df = comparator.compute_statistical_significance(stats_df)
+
+            # Create plots directory
+            plots_dir = output_path / 'GroupComparison'
+            plots_dir.mkdir(exist_ok=True)
+
+            # Generate plots
+            comparator.create_group_comparison_plots(stats_df, plots_dir)
+
+            # Export statistics table
+            stats_path = output_path / f'Group_Statistics_{timestamp}.xlsx'
+            comparator.export_statistics_table(stats_df, stats_path)
+
+            logger.info(f"Group comparison plots saved to {plots_dir}")
+            logger.info(f"Group statistics table saved to {stats_path}")
+        except Exception as e:
+            logger.error(f"Failed to generate group comparison: {e}")
+            import traceback
+            traceback.print_exc()
 
     # Print summary to console
     print_summary_console(df, results)
