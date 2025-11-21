@@ -7,7 +7,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Any
 
 from .style import (
     EXMOPlotStyle, EXMO_COLORS, create_figure,
@@ -569,15 +569,23 @@ class EnhancedDashboardVisualizer:
                                gait_metrics: Dict,
                                rom_metrics: Dict,
                                aggregated_gait: Dict,
-                               aggregated_rom: Dict) -> List[Path]:
+                               aggregated_rom: Dict,
+                               walking_windows: List[Tuple[int, int]] = None,
+                               stationary_windows: List[Tuple[int, int]] = None,
+                               step_results: Dict[str, Any] = None,
+                               fps: float = 120.0) -> List[Path]:
         """
-        Generate all enhanced dashboard plots.
+        Generate all enhanced dashboard plots (v1.3.0: added phase timeline).
 
         Args:
             gait_metrics: Raw gait metrics
             rom_metrics: Raw ROM metrics
             aggregated_gait: Aggregated gait metrics
             aggregated_rom: Aggregated ROM metrics
+            walking_windows: Walking phase windows (v1.3.0)
+            stationary_windows: Stationary phase windows (v1.3.0)
+            step_results: Step detection results per limb (v1.3.0)
+            fps: Frames per second for time conversion (v1.3.0)
 
         Returns:
             List of paths to generated plots
@@ -590,6 +598,13 @@ class EnhancedDashboardVisualizer:
         plots.append(self.plot_speed_spatial_dashboard(gait_metrics, aggregated_gait))
         plots.append(self.plot_phase_timing_dashboard(gait_metrics, aggregated_gait))
         plots.append(self.plot_rom_dashboard(rom_metrics, aggregated_rom))
+
+        # v1.3.0: Add phase timeline plot if data is available
+        # Use the base visualizer's phase timeline (no enhanced version needed yet)
+        if walking_windows is not None and stationary_windows is not None and step_results is not None:
+            from .visualizer import DashboardVisualizer
+            base_viz = DashboardVisualizer(self.output_dir, dpi=self.dpi)
+            plots.append(base_viz.plot_phase_timeline(walking_windows, stationary_windows, step_results, fps))
 
         logger.info(f"Generated {len(plots)} enhanced dashboard plots")
 

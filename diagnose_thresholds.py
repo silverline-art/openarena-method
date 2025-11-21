@@ -79,8 +79,11 @@ def analyze_com_speed_distribution(top_path, side_path, bottom_path):
         hip_center = keypoints_preprocessed.get('rib_center',
                                                np.zeros((loader.n_frames, 2)))
 
-    rib_center = keypoints_preprocessed.get('rib_center', hip_center)
-    com_trajectory = preprocessor.compute_com_trajectory(hip_center, rib_center)
+    # v1.2.0: Physics-based weighted COM
+    snout = keypoints_preprocessed.get('snout', np.full((loader.n_frames, 2), np.nan))
+    neck = keypoints_preprocessed.get('neck', np.full((loader.n_frames, 2), np.nan))
+    rib_center = keypoints_preprocessed.get('rib_center', np.full((loader.n_frames, 2), np.nan))
+    com_trajectory = preprocessor.compute_com_trajectory(snout, neck, rib_center, hip_center)
 
     # Compute CoM speed
     print("[5/5] Analyzing CoM speed distribution...")

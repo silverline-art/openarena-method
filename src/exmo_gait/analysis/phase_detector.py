@@ -76,7 +76,10 @@ class PhaseDetector:
 
     def detect_stationary_phase(self, com_speed: np.ndarray) -> np.ndarray:
         """
-        Detect stationary phase using MAD-based thresholding.
+        Detect stationary phase using dynamic MAD-based thresholding (v1.3.0).
+
+        Threshold = median(speed) + (multiplier × MAD)
+        Safety clamp: [0.0, 2.0] cm/s
 
         Args:
             com_speed: CoM speed array (cm/s)
@@ -84,8 +87,19 @@ class PhaseDetector:
         Returns:
             Boolean array where True indicates stationary
         """
-        mad = compute_mad(com_speed)
-        threshold = mad * self.stationary_mad_threshold
+        # v1.3.0: Dynamic threshold from data distribution (filter NaN)
+        valid_speeds = com_speed[~np.isnan(com_speed)]
+
+        if len(valid_speeds) == 0:
+            logger.warning("No valid speed values for stationary detection")
+            return np.zeros(len(com_speed), dtype=bool)
+
+        median_speed = np.median(valid_speeds)
+        mad = compute_mad(valid_speeds)
+        threshold = median_speed + (mad * self.stationary_mad_threshold)
+
+        # Safety clamp
+        threshold = np.clip(threshold, 0.0, 2.0)
 
         stationary = com_speed < threshold
 
@@ -93,8 +107,8 @@ class PhaseDetector:
             stationary = smooth_binary_classification(stationary, self.smoothing_window_frames)
 
         logger.info(
-            f"Detected stationary phase: threshold={threshold:.2f} cm/s, "
-            f"{np.sum(stationary)/len(stationary)*100:.1f}% of frames"
+            f"[v1.3.0] Stationary detection: median={median_speed:.2f}, MAD={mad:.2f}, "
+            f"threshold={threshold:.2f} cm/s, {np.sum(stationary)/len(stationary)*100:.1f}% of frames"
         )
 
         return stationary
@@ -137,7 +151,10 @@ class PhaseDetector:
 
     def detect_walking_phase(self, com_speed: np.ndarray) -> np.ndarray:
         """
-        Detect walking phase using dynamic MAD-based thresholding.
+        Detect walking phase using dynamic MAD-based thresholding (v1.3.0).
+
+        Threshold = max(p75, median + (multiplier × MAD))
+        Safety clamp: [2.0, 50.0] cm/s
 
         Args:
             com_speed: CoM speed array (cm/s)
@@ -145,13 +162,23 @@ class PhaseDetector:
         Returns:
             Boolean array where True indicates walking
         """
-        if self.use_hybrid_threshold:
-            # v1.2.0: Hybrid MAD + percentile threshold
-            threshold = self.compute_hybrid_threshold(com_speed, self.walking_mad_threshold)
-        else:
-            # v1.1.0: Pure MAD threshold
-            mad = compute_mad(com_speed)
-            threshold = mad * self.walking_mad_threshold
+        # v1.3.0: Dynamic threshold from data distribution (filter NaN)
+        valid_speeds = com_speed[~np.isnan(com_speed)]
+
+        if len(valid_speeds) == 0:
+            logger.warning("No valid speed values for walking detection")
+            return np.zeros(len(com_speed), dtype=bool)
+
+        median_speed = np.median(valid_speeds)
+        mad = compute_mad(valid_speeds)
+        p75_speed = np.percentile(valid_speeds, 75)
+
+        # Threshold = max(p75, median + multiplier*MAD)
+        mad_threshold = median_speed + (mad * self.walking_mad_threshold)
+        threshold = max(p75_speed, mad_threshold)
+
+        # Safety clamp
+        threshold = np.clip(threshold, 2.0, 50.0)
 
         walking = com_speed > threshold
 
@@ -159,8 +186,8 @@ class PhaseDetector:
             walking = smooth_binary_classification(walking, self.smoothing_window_frames)
 
         logger.info(
-            f"Detected walking phase: threshold={threshold:.2f} cm/s "
-            f"({'hybrid' if self.use_hybrid_threshold else 'MAD-only'}), "
+            f"[v1.3.0] Walking detection: median={median_speed:.2f}, MAD={mad:.2f}, "
+            f"p75={p75_speed:.2f}, threshold={threshold:.2f} cm/s, "
             f"{np.sum(walking)/len(walking)*100:.1f}% of frames"
         )
 

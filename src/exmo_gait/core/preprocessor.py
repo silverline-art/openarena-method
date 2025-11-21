@@ -49,7 +49,8 @@ class DataPreprocessor:
         self.smoothing_poly = smoothing_poly
         self.outlier_threshold = outlier_threshold
         self.max_interpolation_gap = max_interpolation_gap
-        self.scale_factor = None
+        self.scale_factor = None  # Legacy: single scaling factor
+        self.scaling_factors = {}  # v1.3.0: Per-view scaling factors {top, side, bottom}
 
     def compute_scale_factor(self,
                             point1: np.ndarray,
@@ -124,6 +125,138 @@ class DataPreprocessor:
 
         return self.scale_factor, diagnostics
 
+    def compute_per_view_scaling(self,
+                                 view_keypoints: Dict[str, Dict[str, np.ndarray]],
+                                 expected_body_length_cm: float = DEFAULT_MOUSE_BODY_LENGTH_CM,
+                                 min_likelihood: float = MIN_LIKELIHOOD_SCALING,
+                                 tolerance: float = SCALING_TOLERANCE_DEFAULT) -> Tuple[Dict[str, float], Dict]:
+        """
+        Compute independent scaling factors for each camera view (v1.3.0).
+
+        Each view has different camera distance/focal length, requiring
+        view-specific pixel-to-cm conversion.
+
+        Args:
+            view_keypoints: Dict with keys 'top', 'side', 'bottom', each containing:
+                - 'point1': Reference point 1 (e.g., snout)
+                - 'point2': Reference point 2 (e.g., tail_base)
+                - 'likelihood1': Optional likelihood for point1
+                - 'likelihood2': Optional likelihood for point2
+            expected_body_length_cm: Expected body length (default 10.0 cm)
+            min_likelihood: Minimum confidence threshold
+            tolerance: Allowed variance from median
+
+        Returns:
+            Tuple of (scaling_factors_dict, diagnostics_dict)
+            scaling_factors_dict: {'top': cm/px, 'side': cm/px, 'bottom': cm/px}
+            diagnostics_dict: Per-view diagnostics and cross-view validation
+        """
+        scaling_factors = {}
+        per_view_diagnostics = {}
+
+        for view_name, keypoints in view_keypoints.items():
+            point1 = keypoints.get('point1')
+            point2 = keypoints.get('point2')
+            likelihood1 = keypoints.get('likelihood1')
+            likelihood2 = keypoints.get('likelihood2')
+
+            if point1 is None or point2 is None:
+                logger.warning(f"Missing keypoints for {view_name} view, skipping")
+                continue
+
+            # Compute scaling factor for this view
+            scale_factor, view_diag = compute_scaling_factor_v2(
+                point1, point2,
+                likelihood1, likelihood2,
+                expected_body_length_cm,
+                min_likelihood,
+                tolerance
+            )
+
+            scaling_factors[view_name] = scale_factor
+            per_view_diagnostics[view_name] = view_diag
+
+            logger.info(f"[v1.3.0] {view_name.upper()} view scaling: {scale_factor:.6f} cm/pixel "
+                       f"(used {view_diag['frames_used']}/{view_diag['frames_total']} frames)")
+
+        # Store in instance
+        self.scaling_factors = scaling_factors
+
+        # For backward compatibility, set legacy scale_factor to TOP view
+        if 'top' in scaling_factors:
+            self.scale_factor = scaling_factors['top']
+
+        # Cross-view validation
+        validation = self._validate_cross_view_scaling(scaling_factors)
+
+        diagnostics = {
+            'per_view': per_view_diagnostics,
+            'validation': validation,
+            'scaling_factors': scaling_factors
+        }
+
+        return scaling_factors, diagnostics
+
+    def _validate_cross_view_scaling(self, scaling_factors: Dict[str, float]) -> Dict:
+        """
+        Validate consistency across camera views (v1.3.0).
+
+        Args:
+            scaling_factors: Dict of {view_name: cm/pixel}
+
+        Returns:
+            Validation diagnostics
+        """
+        validation = {
+            'cross_view_consistency': 'PASS',
+            'warnings': [],
+            'physical_plausibility': 'PASS'
+        }
+
+        # Expected range for mouse videos: [0.02, 0.15] cm/px
+        PHYSICAL_MIN = 0.02
+        PHYSICAL_MAX = 0.15
+        CONSISTENCY_THRESHOLD = 0.02  # 0.02 cm/px difference
+
+        # Physical plausibility check
+        for view, scale in scaling_factors.items():
+            if scale < PHYSICAL_MIN:
+                validation['physical_plausibility'] = 'FAIL'
+                validation['warnings'].append(
+                    f"{view.upper()}: {scale:.4f} cm/px < {PHYSICAL_MIN} cm/px - Camera too far or keypoints incorrect"
+                )
+            elif scale > PHYSICAL_MAX:
+                validation['physical_plausibility'] = 'FAIL'
+                validation['warnings'].append(
+                    f"{view.upper()}: {scale:.4f} cm/px > {PHYSICAL_MAX} cm/px - Camera too close or keypoints incorrect"
+                )
+
+        # Cross-view consistency check
+        if 'top' in scaling_factors and 'side' in scaling_factors:
+            diff_top_side = abs(scaling_factors['top'] - scaling_factors['side'])
+            if diff_top_side > CONSISTENCY_THRESHOLD:
+                validation['cross_view_consistency'] = 'WARNING'
+                validation['warnings'].append(
+                    f"TOP-SIDE differ by {diff_top_side:.4f} cm/px (>{CONSISTENCY_THRESHOLD}) - Check camera alignment"
+                )
+
+        if 'side' in scaling_factors and 'bottom' in scaling_factors:
+            diff_side_bottom = abs(scaling_factors['side'] - scaling_factors['bottom'])
+            if diff_side_bottom > CONSISTENCY_THRESHOLD:
+                validation['cross_view_consistency'] = 'WARNING'
+                validation['warnings'].append(
+                    f"SIDE-BOTTOM differ by {diff_side_bottom:.4f} cm/px (>{CONSISTENCY_THRESHOLD}) - Check camera alignment"
+                )
+
+        # Log validation results
+        if validation['warnings']:
+            for warning in validation['warnings']:
+                logger.warning(f"[v1.3.0] Cross-view validation: {warning}")
+        else:
+            logger.info("[v1.3.0] Cross-view validation: All checks PASS")
+
+        return validation
+
     def preprocess_trajectory(self, trajectory: np.ndarray) -> Tuple[np.ndarray, Dict]:
         """
         Preprocess single trajectory (x or y coordinates).
@@ -195,46 +328,102 @@ class DataPreprocessor:
 
         return processed, quality_metrics
 
-    def convert_to_cm(self, pixel_data: np.ndarray) -> np.ndarray:
+    def convert_to_cm(self, pixel_data: np.ndarray, view: str = None) -> np.ndarray:
         """
-        Convert pixel coordinates to centimeters.
+        Convert pixel coordinates to centimeters (v1.3.0: view-specific scaling).
 
         Args:
             pixel_data: Array of coordinates in pixels
+            view: Optional view name ('top', 'side', 'bottom') for per-view scaling.
+                  If None, uses legacy single scale_factor.
 
         Returns:
             Array of coordinates in centimeters
         """
-        if self.scale_factor is None:
-            raise ValueError("Scale factor not computed. Call compute_scale_factor first.")
+        if view is not None and view in self.scaling_factors:
+            # v1.3.0: Use view-specific scaling factor
+            scale_factor = self.scaling_factors[view]
+        elif self.scale_factor is not None:
+            # Legacy: Use single scaling factor
+            scale_factor = self.scale_factor
+        else:
+            raise ValueError("Scale factor not computed. Call compute_scale_factor or compute_per_view_scaling first.")
 
-        return pixels_to_cm(pixel_data, self.scale_factor)
+        return pixels_to_cm(pixel_data, scale_factor)
 
     def compute_com_trajectory(self,
-                               hip_center: np.ndarray,
-                               rib_center: np.ndarray) -> np.ndarray:
+                               snout: np.ndarray,
+                               neck: np.ndarray,
+                               rib_center: np.ndarray,
+                               hip_center: np.ndarray) -> np.ndarray:
         """
-        Compute center of mass trajectory.
+        Compute center of mass trajectory using weighted average (v1.2.0 physics-based).
+
+        Physics: COM = weighted_average([snout, neck, rib, hip])
+        Thoracic mass ~35-40% body mass → rib_center has highest weight
 
         Args:
-            hip_center: Array of shape (N, 2) for hip center position
+            snout: Array of shape (N, 2) for snout position
+            neck: Array of shape (N, 2) for neck position
             rib_center: Array of shape (N, 2) for rib center position
+            hip_center: Array of shape (N, 2) for hip center position
 
         Returns:
             CoM trajectory of shape (N, 2)
         """
+        from ..constants import (
+            COM_WEIGHT_SNOUT,
+            COM_WEIGHT_NECK,
+            COM_WEIGHT_RIB_CENTER,
+            COM_WEIGHT_HIP
+        )
+
+        weights = np.array([
+            COM_WEIGHT_SNOUT,      # 0.10 - head/snout
+            COM_WEIGHT_NECK,       # 0.15 - neck region
+            COM_WEIGHT_RIB_CENTER, # 0.25 - thoracic (largest mass)
+            COM_WEIGHT_HIP         # 0.20 - pelvic region
+        ])
+
         com_trajectory = np.zeros_like(hip_center)
 
         for i in range(len(hip_center)):
-            if not (np.isnan(hip_center[i]).any() or np.isnan(rib_center[i]).any()):
-                points = np.array([hip_center[i], rib_center[i]])
-                com_trajectory[i] = compute_center_of_mass(points)
+            keypoints_available = [snout[i], neck[i], rib_center[i], hip_center[i]]
+
+            # Check if all keypoints are valid
+            if not any(np.isnan(kp).any() for kp in keypoints_available):
+                points = np.array(keypoints_available)
+                com_trajectory[i] = compute_center_of_mass(points, weights)
             else:
-                com_trajectory[i] = np.nan
+                # Fallback: use available keypoints with renormalized weights
+                valid_points = []
+                valid_weights = []
+
+                if not np.isnan(snout[i]).any():
+                    valid_points.append(snout[i])
+                    valid_weights.append(COM_WEIGHT_SNOUT)
+                if not np.isnan(neck[i]).any():
+                    valid_points.append(neck[i])
+                    valid_weights.append(COM_WEIGHT_NECK)
+                if not np.isnan(rib_center[i]).any():
+                    valid_points.append(rib_center[i])
+                    valid_weights.append(COM_WEIGHT_RIB_CENTER)
+                if not np.isnan(hip_center[i]).any():
+                    valid_points.append(hip_center[i])
+                    valid_weights.append(COM_WEIGHT_HIP)
+
+                if len(valid_points) >= 2:
+                    points = np.array(valid_points)
+                    weights_array = np.array(valid_weights)
+                    com_trajectory[i] = compute_center_of_mass(points, weights_array)
+                else:
+                    com_trajectory[i] = np.nan
 
         com_processed, _ = self.preprocess_keypoint_2d(com_trajectory)
 
-        logger.info("Computed and preprocessed CoM trajectory")
+        logger.info("[v1.2.0] Computed physics-based CoM trajectory with weighted average")
+        logger.info(f"[v1.2.0] Weights: snout={COM_WEIGHT_SNOUT}, neck={COM_WEIGHT_NECK}, "
+                   f"rib={COM_WEIGHT_RIB_CENTER}, hip={COM_WEIGHT_HIP}")
 
         return com_processed
 

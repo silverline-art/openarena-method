@@ -52,7 +52,9 @@ class PipelineContext:
     loader: Any = None
     keypoints: Dict[str, np.ndarray] = field(default_factory=dict)
     keypoints_preprocessed: Dict[str, np.ndarray] = field(default_factory=dict)
+    preprocessor: Any = None  # v1.3.0: DataPreprocessor instance
     scale_factor: float = 0.1
+    scaling_factors: Dict[str, float] = field(default_factory=dict)  # v1.3.0: Per-view scaling
     scaling_diagnostics: Dict[str, Any] = field(default_factory=dict)
     com_trajectory: Optional[np.ndarray] = None
     walking_windows: List[Tuple[int, int]] = field(default_factory=list)

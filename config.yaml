@@ -21,22 +21,22 @@ global_settings:
   outlier_threshold: 3.0            # MAD threshold for outlier detection
   max_interpolation_gap: 5          # Maximum gap size for interpolation (frames)
 
-  # Phase detection
-  stationary_mad_threshold: 1.5     # MAD multiplier for stationary detection
-  walking_mad_threshold: 2.0        # MAD multiplier for walking detection
-  min_walking_duration: 0.3         # Minimum walking duration (seconds)
-  min_stationary_duration: 0.25     # Minimum stationary duration (seconds)
+  # Phase detection - ADJUSTED FOR BETTER DETECTION
+  stationary_mad_threshold: 1.0     # MAD multiplier for stationary detection (lowered from 1.5)
+  walking_mad_threshold: 1.2        # MAD multiplier for walking detection (lowered from 2.0)
+  min_walking_duration: 0.2         # Minimum walking duration (seconds) (lowered from 0.3)
+  min_stationary_duration: 0.15     # Minimum stationary duration (seconds) (lowered from 0.25)
   smoothing_window_ms: 250.0        # Phase smoothing window (milliseconds)
   merge_gap_ms: 100.0               # Gap size for merging windows (milliseconds)
 
-  # Step detection
-  min_stride_duration: 0.1          # Minimum stride duration (seconds)
-  max_stride_duration: 1.0          # Maximum stride duration (seconds)
-  prominence_multiplier: 0.5        # Peak prominence multiplier for step detection
+  # Step detection - ADJUSTED FOR BETTER DETECTION
+  min_stride_duration: 0.05         # Minimum stride duration (seconds) (lowered from 0.1 - v1.2.0 value)
+  max_stride_duration: 1.5          # Maximum stride duration (seconds) (increased from 1.0)
+  prominence_multiplier: 0.3        # Peak prominence multiplier for step detection (lowered from 0.5)
 
-  # Validation
-  min_valid_data_ratio: 0.7         # Minimum ratio of valid (non-NaN) data
-  min_strides_required: 3           # Minimum strides for metric computation
+  # Validation - RELAXED FOR BETTER DETECTION
+  min_valid_data_ratio: 0.5         # Minimum ratio of valid (non-NaN) data (lowered from 0.7)
+  min_strides_required: 2           # Minimum strides for metric computation (lowered from 3)
 
   # Output
   plot_dpi: 300                     # Resolution for PNG plots

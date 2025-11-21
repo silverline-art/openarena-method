@@ -221,6 +221,48 @@ class XLSXExporter:
 
         logger.info(f"Export complete: {self.output_path}")
 
+    def save_stride_data(self,
+                        step_results: Dict,
+                        output_dir: Path) -> None:
+        """
+        Save raw stride data arrays to CSV files.
+
+        Args:
+            step_results: Step detection results with stride arrays
+            output_dir: Output directory for stride data files
+        """
+        intermediates_dir = output_dir / 'intermediates'
+        intermediates_dir.mkdir(parents=True, exist_ok=True)
+
+        for limb, results in step_results.items():
+            stride_lengths = results.get('stride_lengths', np.array([]))
+            stride_times = results.get('stride_times', np.array([]))
+            foot_strikes = results.get('foot_strikes', np.array([]))
+
+            if len(stride_lengths) == 0:
+                continue
+
+            rows = []
+            for i in range(len(stride_lengths)):
+                row = {
+                    'stride_number': i + 1,
+                    'stride_length_cm': stride_lengths[i] if i < len(stride_lengths) else np.nan,
+                    'stride_time_s': stride_times[i] if i < len(stride_times) else np.nan,
+                }
+
+                # Add frame information if available
+                if i < len(foot_strikes):
+                    row['start_frame'] = foot_strikes[i]
+                if i + 1 < len(foot_strikes):
+                    row['end_frame'] = foot_strikes[i + 1]
+
+                rows.append(row)
+
+            if rows:
+                stride_df = pd.DataFrame(rows)
+                stride_df.to_csv(intermediates_dir / f'stride_data_{limb}.csv', index=False)
+                logger.info(f"Saved {len(rows)} stride records for {limb}")
+
     def save_intermediate_data(self,
                               com_trajectory: np.ndarray,
                               paw_trajectories: Dict[str, np.ndarray],
