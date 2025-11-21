@@ -17,6 +17,7 @@ from ..statistics.aggregator import StatisticsAggregator
 from ..export.xlsx_exporter import XLSXExporter
 from ..export.visualizer import DashboardVisualizer
 from ..export.visualizer_enhanced import EnhancedDashboardVisualizer
+from ..export.json_exporter import DetailedJSONExporter
 from ..constants import (
     FPS_DEFAULT,
     DEFAULT_MOUSE_BODY_LENGTH_CM,
@@ -140,21 +141,22 @@ class DataLoadingStage:
 class SpatialScalingStage:
     """Compute spatial scaling factor (pixels to centimeters).
 
-    Responsibility: Calculate scale factor using either v1.1.0 spine-only
-    or v1.2.0 full-body method based on configuration.
+    Responsibility: Calculate scale factor using either v1.1.0 spine-only,
+    v1.2.0 full-body, or v1.3.0 per-view method based on configuration.
     """
 
     def execute(self, ctx: PipelineContext) -> PipelineContext:
         """Compute scale factor from snout-tail distance.
 
         Args:
-            ctx: Pipeline context with keypoints
+            ctx: Pipeline context with keypoints and loader
 
         Returns:
-            Context with scale_factor populated
+            Context with scale_factor and/or scaling_factors populated
         """
         gs = ctx.get_global_settings()
         scaling_method = gs.get('scaling_method', 'spine_only')
+        use_per_view_scaling = gs.get('use_per_view_scaling', True)  # v1.3.0 default: ON
 
         ctx.logger.info("Step 3/10: Computing spatial scaling")
 
@@ -169,7 +171,70 @@ class SpatialScalingStage:
         tail_base = ctx.keypoints.get('tail_base')
 
         if snout is not None and tail_base is not None:
-            if scaling_method == 'full_body':
+            if use_per_view_scaling and ctx.loader is not None:
+                # v1.3.0: Per-view scaling (TOP, SIDE, BOTTOM)
+                ctx.logger.info("[v1.3.0] Computing per-view scaling factors")
+
+                expected_body_length = gs.get('expected_body_length_cm', DEFAULT_MOUSE_BODY_LENGTH_CM)
+                min_likelihood = gs.get('scaling_min_likelihood', 0.9)
+                tolerance = gs.get('scaling_tolerance', 0.25)
+
+                # Prepare view-specific keypoints
+                view_keypoints = {}
+
+                # TOP view: snout ↔ tail_base (full body length)
+                if ctx.loader.get_keypoint('top', 'snout') is not None:
+                    view_keypoints['top'] = {
+                        'point1': ctx.loader.get_keypoint('top', 'snout'),
+                        'point2': ctx.loader.get_keypoint('top', 'tail_base'),
+                        'likelihood1': None,
+                        'likelihood2': None
+                    }
+
+                # SIDE view: snout ↔ tail_base (sagittal projection)
+                if ctx.loader.get_keypoint('side', 'snout') is not None:
+                    view_keypoints['side'] = {
+                        'point1': ctx.loader.get_keypoint('side', 'snout'),
+                        'point2': ctx.loader.get_keypoint('side', 'tail_base'),
+                        'likelihood1': None,
+                        'likelihood2': None
+                    }
+
+                # BOTTOM view: hip_center ↔ tail_base (lower body reference)
+                hip_l = ctx.loader.get_keypoint('bottom', 'hip_L')
+                hip_r = ctx.loader.get_keypoint('bottom', 'hip_R')
+                if hip_l is not None and hip_r is not None:
+                    # Compute hip center for bottom view
+                    hip_center_bottom = (hip_l + hip_r) / 2.0
+                    tail_bottom = ctx.loader.get_keypoint('bottom', 'tail_base')
+                    if tail_bottom is not None:
+                        view_keypoints['bottom'] = {
+                            'point1': hip_center_bottom,
+                            'point2': tail_bottom,
+                            'likelihood1': None,
+                            'likelihood2': None
+                        }
+
+                scaling_factors, diagnostics = preprocessor.compute_per_view_scaling(
+                    view_keypoints,
+                    expected_body_length_cm=expected_body_length,
+                    min_likelihood=min_likelihood,
+                    tolerance=tolerance
+                )
+
+                # Log cross-view validation
+                validation = diagnostics['validation']
+                ctx.logger.info(f"[v1.3.0] Cross-view consistency: {validation['cross_view_consistency']}")
+                ctx.logger.info(f"[v1.3.0] Physical plausibility: {validation['physical_plausibility']}")
+
+                return ctx.update(
+                    preprocessor=preprocessor,
+                    scale_factor=preprocessor.scale_factor,  # For backward compatibility
+                    scaling_factors=scaling_factors,
+                    scaling_diagnostics=diagnostics
+                )
+
+            elif scaling_method == 'full_body':
                 # v1.2.0: Full-body scaling with likelihood filtering
                 expected_body_length = gs.get('expected_body_length_cm', DEFAULT_MOUSE_BODY_LENGTH_CM)
                 min_likelihood = gs.get('scaling_min_likelihood', 0.9)
@@ -185,6 +250,7 @@ class SpatialScalingStage:
                               f"(used {diagnostics['frames_used']}/{diagnostics['frames_total']} frames)")
 
                 return ctx.update(
+                    preprocessor=preprocessor,
                     scale_factor=scale_factor,
                     scaling_diagnostics=diagnostics
                 )
@@ -197,10 +263,10 @@ class SpatialScalingStage:
                 )
                 ctx.logger.info(f"[v1.1.0] Spine-only scaling: {scale_factor:.6f} cm/pixel")
 
-                return ctx.update(scale_factor=scale_factor)
+                return ctx.update(preprocessor=preprocessor, scale_factor=scale_factor)
         else:
             ctx.logger.warning("Could not compute scale factor, using default")
-            return ctx.update(scale_factor=0.1)
+            return ctx.update(preprocessor=preprocessor, scale_factor=0.1)
 
 
 class PreprocessingStage:
@@ -223,13 +289,30 @@ class PreprocessingStage:
         use_adaptive_smoothing = gs.get('smoothing_adaptive', False)
         use_3d_com = gs.get('use_3d_com', False)
 
-        preprocessor = DataPreprocessor(
-            smoothing_window=gs.get('smoothing_window', 11),
-            smoothing_poly=gs.get('smoothing_poly', 3),
-            outlier_threshold=gs.get('outlier_threshold', 3.0),
-            max_interpolation_gap=gs.get('max_interpolation_gap', 5)
-        )
-        preprocessor.scale_factor = ctx.scale_factor
+        # Use preprocessor from context if available (v1.3.0), otherwise create new one
+        if hasattr(ctx, 'preprocessor') and ctx.preprocessor is not None:
+            preprocessor = ctx.preprocessor
+        else:
+            preprocessor = DataPreprocessor(
+                smoothing_window=gs.get('smoothing_window', 11),
+                smoothing_poly=gs.get('smoothing_poly', 3),
+                outlier_threshold=gs.get('outlier_threshold', 3.0),
+                max_interpolation_gap=gs.get('max_interpolation_gap', 5)
+            )
+            preprocessor.scale_factor = ctx.scale_factor
+            if hasattr(ctx, 'scaling_factors'):
+                preprocessor.scaling_factors = ctx.scaling_factors
+
+        # Define keypoint-to-view mapping (v1.3.0)
+        keypoint_view_map = {
+            'snout': 'top', 'neck': 'top', 'tail_base': 'top', 'rib_center': 'top',
+            'spine1': 'top', 'spine2': 'top', 'spine3': 'top',
+            'paw_RR': 'bottom', 'paw_RL': 'bottom', 'paw_FR': 'bottom', 'paw_FL': 'bottom',
+            'hip_R': 'side', 'hip_L': 'side', 'hip_center': 'side',
+            'knee_R': 'side', 'knee_L': 'side',
+            'elbow_R': 'side', 'elbow_L': 'side',
+            'shoulder_R': 'side', 'shoulder_L': 'side'
+        }
 
         # Apply smoothing
         if use_adaptive_smoothing:
@@ -261,10 +344,12 @@ class PreprocessingStage:
             keypoints_preprocessed = preprocessor.batch_preprocess_keypoints(ctx.keypoints)
             ctx.logger.info("[v1.1.0] Applied fixed window smoothing")
 
-        # Convert to cm
+        # Convert to cm with view-specific scaling (v1.3.0)
         for kp_name in keypoints_preprocessed:
+            view = keypoint_view_map.get(kp_name)
             keypoints_preprocessed[kp_name] = preprocessor.convert_to_cm(
-                keypoints_preprocessed[kp_name]
+                keypoints_preprocessed[kp_name],
+                view=view
             )
 
         # Compute center of mass
@@ -292,7 +377,7 @@ class PreprocessingStage:
                 use_3d_com = False
 
         if not use_3d_com:
-            # v1.1.0: 2D COM
+            # v1.2.0: Physics-based weighted COM
             if 'hip_R' in keypoints_preprocessed and 'hip_L' in keypoints_preprocessed:
                 hip_center = preprocessor.compute_hip_center(
                     keypoints_preprocessed['hip_L'],
@@ -303,9 +388,13 @@ class PreprocessingStage:
                 hip_center = keypoints_preprocessed.get('rib_center',
                                                        np.zeros((ctx.loader.n_frames, 2)))
 
-            rib_center = keypoints_preprocessed.get('rib_center', hip_center)
-            com_trajectory = preprocessor.compute_com_trajectory(hip_center, rib_center)
-            ctx.logger.info("[v1.1.0] Computed 2D COM trajectory")
+            # Get required keypoints for weighted COM
+            snout = keypoints_preprocessed.get('snout', np.full((ctx.loader.n_frames, 2), np.nan))
+            neck = keypoints_preprocessed.get('neck', np.full((ctx.loader.n_frames, 2), np.nan))
+            rib_center = keypoints_preprocessed.get('rib_center', np.full((ctx.loader.n_frames, 2), np.nan))
+
+            com_trajectory = preprocessor.compute_com_trajectory(snout, neck, rib_center, hip_center)
+            ctx.logger.info("[v1.2.0] Computed physics-based weighted COM trajectory")
 
         return ctx.update(
             keypoints_preprocessed=keypoints_preprocessed,
@@ -348,19 +437,35 @@ class PhaseDetectionStage:
         walking_windows = phase_detector.detect_walking_windows(ctx.com_trajectory)
         stationary_windows = phase_detector.detect_stationary_windows(ctx.com_trajectory)
 
-        ctx.logger.info("Step 6/10: Detecting foot strikes")
-        step_detector = StepDetector(
-            fps=gs.get('fps', FPS_DEFAULT),
-            min_stride_duration=gs.get('min_stride_duration', 0.1),
-            max_stride_duration=gs.get('max_stride_duration', 1.0),
-            prominence_multiplier=gs.get('prominence_multiplier', 0.5)
-        )
-
         paw_trajectories = {
             kp: ctx.keypoints_preprocessed[kp]
             for kp in ['paw_RR', 'paw_RL', 'paw_FR', 'paw_FL']
             if kp in ctx.keypoints_preprocessed
         }
+
+        # v1.3.2: Auto-calibrate prominence_multiplier if enabled
+        prominence_multiplier = gs.get('prominence_multiplier', 0.5)
+        if gs.get('auto_calibrate_prominence', True):
+            ctx.logger.info("Step 6a/10: Auto-calibrating step detection parameters")
+            from ..analysis.parameter_calibrator import ParameterCalibrator
+            calibrator = ParameterCalibrator(fps=gs.get('fps', FPS_DEFAULT))
+            calibration_result = calibrator.calibrate_prominence_multiplier(
+                paw_trajectories,
+                walking_windows
+            )
+            prominence_multiplier = calibration_result['optimal_multiplier']
+            ctx.logger.info(
+                f"[Calibration] Selected prominence_multiplier={prominence_multiplier:.1f} "
+                f"(stride counts: {calibration_result['stride_counts']})"
+            )
+
+        ctx.logger.info("Step 6/10: Detecting foot strikes")
+        step_detector = StepDetector(
+            fps=gs.get('fps', FPS_DEFAULT),
+            min_stride_duration=gs.get('min_stride_duration', 0.1),
+            max_stride_duration=gs.get('max_stride_duration', 1.0),
+            prominence_multiplier=prominence_multiplier
+        )
 
         step_results = step_detector.detect_all_limbs(paw_trajectories, walking_windows)
 
@@ -420,7 +525,8 @@ class MetricsComputationStage:
         rom_computer = ROMMetricsComputer(fps=gs.get('fps', FPS_DEFAULT))
         rom_metrics = rom_computer.compute_all_rom_metrics(
             ctx.keypoints_preprocessed,
-            ctx.com_trajectory
+            ctx.com_trajectory,
+            step_results=ctx.step_results  # v1.3.1 - pass for per-stride COM sway
         )
 
         return ctx.update(gait_metrics=gait_metrics, rom_metrics=rom_metrics)
@@ -564,6 +670,23 @@ class ExportStage:
             ctx.output_dir
         )
 
+        # Save raw stride data for batch summary aggregation
+        exporter.save_stride_data(
+            ctx.step_results,
+            ctx.output_dir
+        )
+
+        # v1.3.0: Export detailed JSON with per-step/stride data and multi-view keypoints
+        json_exporter = DetailedJSONExporter(ctx.output_dir, fps=gs.get('fps', FPS_DEFAULT))
+        json_path = json_exporter.export_detailed_analysis(
+            step_results=ctx.step_results,
+            gait_metrics=ctx.gait_metrics,
+            walking_windows=ctx.walking_windows,
+            stationary_windows=ctx.stationary_windows,
+            keypoints=ctx.keypoints_preprocessed,
+            metadata=metadata
+        )
+
         # Generate plots
         use_enhanced = gs.get('use_enhanced_plots', False)
         plot_dpi = gs.get('plot_dpi', PLOT_DPI)
@@ -580,15 +703,22 @@ class ExportStage:
         else:
             visualizer = DashboardVisualizer(ctx.output_dir, dpi=plot_dpi)
 
+        # v1.3.0: Pass phase and step data for timeline plot
+        fps = gs.get('fps', FPS_DEFAULT)
         plot_paths = visualizer.generate_all_dashboards(
             ctx.gait_metrics,
             ctx.rom_metrics,
             ctx.aggregated_gait,
-            ctx.aggregated_rom
+            ctx.aggregated_rom,
+            walking_windows=ctx.walking_windows,
+            stationary_windows=ctx.stationary_windows,
+            step_results=ctx.step_results,
+            fps=fps
         )
 
         output_files = {
             'xlsx': str(xlsx_path),
+            'json': str(json_path),  # v1.3.0: Detailed per-step/stride JSON
             'plots': [str(p) for p in plot_paths]
         }
 
@@ -596,6 +726,7 @@ class ExportStage:
         ctx.logger.info("Analysis complete!")
         ctx.logger.info(f"Results saved to: {ctx.output_dir}")
         ctx.logger.info(f"  - Excel: {xlsx_filename}")
+        ctx.logger.info(f"  - JSON: {json_path.name}")  # v1.3.0
         ctx.logger.info(f"  - Plots: {len(plot_paths)} PNG files")
         ctx.logger.info(f"  - Pipeline Version: {metadata['pipeline_version']}")
         ctx.logger.info("=" * 80)

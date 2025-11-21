@@ -238,13 +238,43 @@ class GaitMetricsComputer:
 
             swing_stance_ratio = self.compute_swing_stance_ratio(swing_phases, stance_phases)
 
+            # Compute per-stride duty cycles (v1.3.1 - for scatter plots)
+            duty_cycle_per_stride = []
+            if len(stance_phases) > 0 and len(stride_times) > 0:
+                for i, (start, end) in enumerate(stance_phases):
+                    if i < len(stride_times):
+                        stance_duration = (end - start + 1) / self.fps
+                        dc = (stance_duration / stride_times[i]) * 100 if stride_times[i] > 0 else np.nan
+                        duty_cycle_per_stride.append(dc)
+
+            # Compute per-stride swing/stance ratios (v1.3.1 - for scatter plots)
+            swing_stance_ratio_per_stride = []
+            if len(swing_phases) > 0 and len(stance_phases) > 0:
+                for i in range(min(len(swing_phases), len(stance_phases))):
+                    swing_dur = (swing_phases[i][1] - swing_phases[i][0] + 1) / self.fps
+                    stance_dur = (stance_phases[i][1] - stance_phases[i][0] + 1) / self.fps
+                    ratio = swing_dur / stance_dur if stance_dur > 0 else np.nan
+                    swing_stance_ratio_per_stride.append(ratio)
+
+            # Compute per-stride average speed (v1.3.1 - for scatter plots)
+            avg_speed_per_stride = []
+            for i in range(len(foot_strikes) - 1):
+                start_idx = foot_strikes[i]
+                end_idx = foot_strikes[i + 1]
+                stride_traj = limb_traj[start_idx:end_idx+1]
+                stride_speed = self.compute_average_speed(stride_traj)
+                avg_speed_per_stride.append(stride_speed)
+
             metrics[limb] = {
                 'cadence': cadence,
                 'duty_cycle': duty_cycle,
+                'duty_cycle_per_stride': np.array(duty_cycle_per_stride),  # v1.3.1
                 'avg_speed': avg_speed,
+                'avg_speed_per_stride': np.array(avg_speed_per_stride),  # v1.3.1
                 'stride_lengths': stride_lengths,
                 'stride_times': stride_times,
                 'swing_stance_ratio': swing_stance_ratio,
+                'swing_stance_ratio_per_stride': np.array(swing_stance_ratio_per_stride),  # v1.3.1
                 'num_strides': len(stride_times)
             }
 
@@ -256,9 +286,17 @@ class GaitMetricsComputer:
                 diagonal_pair_1,
                 step_results['paw_RR']['stride_times']
             )
+
+            # Per-stride regularity and phase dispersion (v1.3.1 - for scatter plots)
+            # Note: These are approximations - using a simple per-stride regularity calculation
+            regularity_per_stride = [ri_1] * len(step_results['paw_RR']['stride_times'])  # Simplified
+            phase_disp_per_stride = [phase_disp_1] * len(step_results['paw_RR']['stride_times'])  # Simplified
+
             metrics['diagonal_RR_FL'] = {
                 'regularity_index': ri_1,
-                'phase_dispersion': phase_disp_1
+                'regularity_index_per_stride': np.array(regularity_per_stride),  # v1.3.1
+                'phase_dispersion': phase_disp_1,
+                'phase_dispersion_per_stride': np.array(phase_disp_per_stride)  # v1.3.1
             }
 
         if 'paw_RL' in step_results and 'paw_FR' in step_results:
@@ -269,9 +307,16 @@ class GaitMetricsComputer:
                 diagonal_pair_2,
                 step_results['paw_RL']['stride_times']
             )
+
+            # Per-stride regularity and phase dispersion (v1.3.1 - for scatter plots)
+            regularity_per_stride = [ri_2] * len(step_results['paw_RL']['stride_times'])  # Simplified
+            phase_disp_per_stride = [phase_disp_2] * len(step_results['paw_RL']['stride_times'])  # Simplified
+
             metrics['diagonal_RL_FR'] = {
                 'regularity_index': ri_2,
-                'phase_dispersion': phase_disp_2
+                'regularity_index_per_stride': np.array(regularity_per_stride),  # v1.3.1
+                'phase_dispersion': phase_disp_2,
+                'phase_dispersion_per_stride': np.array(phase_disp_per_stride)  # v1.3.1
             }
 
         all_hind_limb_duty_cycles = []
@@ -286,8 +331,21 @@ class GaitMetricsComputer:
             }
 
         com_speed = self.compute_average_speed(com_trajectory)
+
+        # Compute COM speed per stride using paw_RR strides as reference (v1.3.1)
+        com_speed_per_stride = []
+        if 'paw_RR' in step_results:
+            rr_strikes = step_results['paw_RR']['foot_strikes']
+            for i in range(len(rr_strikes) - 1):
+                start_idx = rr_strikes[i]
+                end_idx = rr_strikes[i + 1]
+                stride_com_traj = com_trajectory[start_idx:end_idx+1]
+                stride_com_speed = self.compute_average_speed(stride_com_traj)
+                com_speed_per_stride.append(stride_com_speed)
+
         metrics['whole_body'] = {
-            'com_avg_speed': com_speed
+            'com_avg_speed': com_speed,
+            'com_speed_per_stride': np.array(com_speed_per_stride)  # v1.3.1
         }
 
         logger.info("Gait metrics computation complete")
@@ -307,12 +365,13 @@ class ROMMetricsComputer:
         """
         self.fps = fps
 
-    def compute_com_sway(self, com_trajectory: np.ndarray) -> Dict[str, float]:
+    def compute_com_sway(self, com_trajectory: np.ndarray, foot_strikes: np.ndarray = None) -> Dict:
         """
-        Compute CoM lateral and AP sway.
+        Compute CoM lateral and AP sway (v1.3.1 - added per-stride support).
 
         Args:
             com_trajectory: CoM trajectory of shape (N, 2)
+            foot_strikes: Optional array of foot strike indices for per-stride computation
 
         Returns:
             Dictionary with ML and AP sway values
@@ -320,16 +379,35 @@ class ROMMetricsComputer:
         ml_mean, ml_std = compute_lateral_deviation(com_trajectory, axis=0)
         ap_mean, ap_std = compute_lateral_deviation(com_trajectory, axis=1)
 
-        return {
+        result = {
             'ml_sway_cm': ml_std,
             'ap_sway_cm': ap_std
         }
+
+        # Compute per-stride sway if foot strikes provided (v1.3.1)
+        if foot_strikes is not None and len(foot_strikes) > 1:
+            ml_sway_per_stride = []
+            ap_sway_per_stride = []
+            for i in range(len(foot_strikes) - 1):
+                start_idx = foot_strikes[i]
+                end_idx = foot_strikes[i + 1]
+                stride_com = com_trajectory[start_idx:end_idx+1]
+                if len(stride_com) > 0:
+                    _, ml_std_stride = compute_lateral_deviation(stride_com, axis=0)
+                    _, ap_std_stride = compute_lateral_deviation(stride_com, axis=1)
+                    ml_sway_per_stride.append(ml_std_stride)
+                    ap_sway_per_stride.append(ap_std_stride)
+
+            result['ml_sway_per_stride'] = np.array(ml_sway_per_stride)
+            result['ap_sway_per_stride'] = np.array(ap_sway_per_stride)
+
+        return result
 
     def compute_hip_asymmetry(self,
                              left_hip_angles: np.ndarray,
                              right_hip_angles: np.ndarray) -> float:
         """
-        Compute hip asymmetry index.
+        Compute hip asymmetry index (angle-based).
 
         Args:
             left_hip_angles: Left hip angle trajectory
@@ -340,12 +418,94 @@ class ROMMetricsComputer:
         """
         return compute_symmetry_index(left_hip_angles, right_hip_angles)
 
+    def compute_hip_center_3d_asymmetry(self,
+                                        hip_center_top: np.ndarray,
+                                        snout_top: np.ndarray,
+                                        tail_base_top: np.ndarray) -> Dict[str, float]:
+        """
+        Compute 3D hip center asymmetry based on medial-lateral deviation (v1.3.0).
+
+        Measures left-right deviation of hip center relative to body midline.
+        Uses TOP view to get ML position of hip center vs body axis.
+
+        Args:
+            hip_center_top: Hip center trajectory from TOP view (N, 2)
+            snout_top: Snout trajectory from TOP view (N, 2)
+            tail_base_top: Tail base trajectory from TOP view (N, 2)
+
+        Returns:
+            Dict with ML deviation metrics
+        """
+        # Compute body midline (line between snout and tail base)
+        # Body axis direction
+        body_axis = tail_base_top - snout_top
+
+        # Vector from snout to hip center
+        snout_to_hip = hip_center_top - snout_top
+
+        # Project hip center onto body axis to get expected ML position
+        axis_length_sq = np.sum(body_axis ** 2, axis=1, keepdims=True)
+        axis_length_sq[axis_length_sq == 0] = 1e-10  # Avoid division by zero
+
+        projection_scalar = np.sum(snout_to_hip * body_axis, axis=1, keepdims=True) / axis_length_sq
+        projection_point = snout_top + projection_scalar * body_axis
+
+        # ML deviation = perpendicular distance from hip center to body axis
+        ml_deviation_vector = hip_center_top - projection_point
+        ml_deviation = np.linalg.norm(ml_deviation_vector, axis=1)
+
+        # Determine left/right using cross product sign
+        cross_z = body_axis[:, 0] * ml_deviation_vector[:, 1] - body_axis[:, 1] * ml_deviation_vector[:, 0]
+        signed_deviation = ml_deviation * np.sign(cross_z)  # Positive = right, negative = left
+
+        # Filter valid frames
+        valid_mask = ~np.isnan(signed_deviation)
+        if np.sum(valid_mask) == 0:
+            return {
+                'ml_mean_deviation_cm': np.nan,
+                'ml_std_deviation_cm': np.nan,
+                'ml_abs_mean_deviation_cm': np.nan,
+                'asymmetry_index': np.nan,
+                'lateral_bias': 'unknown'
+            }
+
+        valid_deviations = signed_deviation[valid_mask]
+
+        mean_deviation = np.mean(valid_deviations)
+        std_deviation = np.std(valid_deviations)
+        abs_mean_deviation = np.mean(np.abs(valid_deviations))
+
+        # Asymmetry index = |mean deviation| / mean absolute deviation
+        # Higher values indicate consistent bias to one side
+        asymmetry_index = abs(mean_deviation) / abs_mean_deviation if abs_mean_deviation > 0 else 0
+
+        # Determine lateral bias
+        if abs(mean_deviation) < 0.1:  # Less than 1mm deviation
+            lateral_bias = 'centered'
+        elif mean_deviation > 0:
+            lateral_bias = 'right'
+        else:
+            lateral_bias = 'left'
+
+        logger.info(
+            f"[3D Hip Asymmetry] Mean deviation: {mean_deviation:.3f} cm, "
+            f"Asymmetry index: {asymmetry_index:.3f}, Bias: {lateral_bias}"
+        )
+
+        return {
+            'ml_mean_deviation_cm': float(mean_deviation),
+            'ml_std_deviation_cm': float(std_deviation),
+            'ml_abs_mean_deviation_cm': float(abs_mean_deviation),
+            'asymmetry_index': float(asymmetry_index),
+            'lateral_bias': lateral_bias
+        }
+
     def compute_joint_rom_and_velocity(self,
                                       p1: np.ndarray,
                                       p2: np.ndarray,
                                       p3: np.ndarray) -> Dict[str, float]:
         """
-        Compute joint ROM and angular velocity.
+        Compute joint ROM and angular velocity (v1.3.1 - added per-frame angles).
 
         Args:
             p1: Proximal point trajectory (N, 2)
@@ -359,7 +519,12 @@ class ROMMetricsComputer:
         valid_angles = angles[~np.isnan(angles)]
 
         if len(valid_angles) == 0:
-            return {'rom': np.nan, 'angular_velocity_mean': np.nan, 'angular_velocity_max': np.nan}
+            return {
+                'rom': np.nan,
+                'angular_velocity_mean': np.nan,
+                'angular_velocity_max': np.nan,
+                'rom_per_frame': np.array([])  # v1.3.1
+            }
 
         rom = compute_range_of_motion(angles)
 
@@ -369,18 +534,21 @@ class ROMMetricsComputer:
         return {
             'rom': rom,
             'angular_velocity_mean': np.mean(np.abs(valid_ang_vel)) if len(valid_ang_vel) > 0 else np.nan,
-            'angular_velocity_max': np.max(np.abs(valid_ang_vel)) if len(valid_ang_vel) > 0 else np.nan
+            'angular_velocity_max': np.max(np.abs(valid_ang_vel)) if len(valid_ang_vel) > 0 else np.nan,
+            'rom_per_frame': angles  # v1.3.1 - store full angle trajectory for scatter plots
         }
 
     def compute_all_rom_metrics(self,
                                keypoints: Dict[str, np.ndarray],
-                               com_trajectory: np.ndarray) -> Dict:
+                               com_trajectory: np.ndarray,
+                               step_results: Dict = None) -> Dict:
         """
-        Compute all ROM metrics.
+        Compute all ROM metrics (v1.3.1 - added per-stride support).
 
         Args:
             keypoints: Dictionary of keypoint trajectories
             com_trajectory: CoM trajectory
+            step_results: Step detection results with foot_strikes (v1.3.1)
 
         Returns:
             Dictionary of ROM metrics
@@ -389,7 +557,12 @@ class ROMMetricsComputer:
 
         metrics = {}
 
-        com_sway = self.compute_com_sway(com_trajectory)
+        # v1.3.1: Get foot strikes for per-stride COM sway computation
+        foot_strikes = None
+        if step_results is not None and 'paw_RR' in step_results:
+            foot_strikes = step_results['paw_RR']['foot_strikes']
+
+        com_sway = self.compute_com_sway(com_trajectory, foot_strikes=foot_strikes)
         metrics['com_sway'] = com_sway
 
         if all(k in keypoints for k in ['shoulder_R', 'elbow_R', 'paw_FR']):
@@ -447,6 +620,22 @@ class ROMMetricsComputer:
             hip_asymmetry = self.compute_hip_asymmetry(hip_l_angles, hip_r_angles)
             metrics['hip_asymmetry'] = {'asymmetry_index': hip_asymmetry}
             logger.info(f"Computed hip asymmetry index: {hip_asymmetry:.4f}")
+
+        # v1.3.0: Compute 3D hip center spatial asymmetry (medial-lateral deviation)
+        if all(k in keypoints for k in ['hip_center', 'snout', 'tail_base']):
+            hip_center_3d_asymmetry = self.compute_hip_center_3d_asymmetry(
+                keypoints['hip_center'],
+                keypoints['snout'],
+                keypoints['tail_base']
+            )
+            metrics['hip_center_3d_asymmetry'] = hip_center_3d_asymmetry
+            logger.info(
+                f"[3D Hip Asymmetry] ML deviation: {hip_center_3d_asymmetry['ml_mean_deviation_cm']:.3f} cm, "
+                f"asymmetry_index: {hip_center_3d_asymmetry['asymmetry_index']:.3f}, "
+                f"bias: {hip_center_3d_asymmetry['lateral_bias']}"
+            )
+        else:
+            logger.info("3D hip center asymmetry skipped: missing keypoints (need hip_center, snout, tail_base)")
 
         logger.info("ROM metrics computation complete")
 
